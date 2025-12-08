@@ -1,0 +1,38 @@
+{
+    "manifest_version": 3,
+    "name": "First Extension",
+    "version": "0.1",
+    "description": "My first Extension",
+    "permissions": ["tabs", "storage"],
+    "host_permissions": ["http://127.0.0.1:5000/*"],
+    "web_accessible_resources": [
+        {
+            "resources": [
+            "web_accessible_resources/mainPromt.txt",
+            "web_accessible_resources/dailynews.txt",
+            "web_accessible_resources/grammar.txt"
+            ],
+            "matches": ["<all_urls>"]
+        }
+    ],
+    "background": {
+      "service_worker": "background.js"
+    },
+    "action": {
+        "default_popup": "popup.html"
+    },
+    "content_scripts": [
+        {
+            "matches": ["<all_urls>"],
+            "js": [
+            "utilities.js",
+            "ai.js",
+            "teacher.js",
+            "class.js",
+            "stt.js",
+            "content.js"
+            ]
+        }
+    ]
+
+}
