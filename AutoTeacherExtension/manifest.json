@@ -1,38 +1,47 @@
 {
-    "manifest_version": 3,
-    "name": "First Extension",
-    "version": "0.1",
-    "description": "My first Extension",
-    "permissions": ["tabs", "storage"],
-    "host_permissions": ["http://127.0.0.1:5000/*"],
-    "web_accessible_resources": [
-        {
-            "resources": [
-            "web_accessible_resources/mainPromt.txt",
-            "web_accessible_resources/dailynews.txt",
-            "web_accessible_resources/grammar.txt"
-            ],
-            "matches": ["<all_urls>"]
-        }
-    ],
-    "background": {
-      "service_worker": "background.js"
-    },
-    "action": {
-        "default_popup": "popup.html"
-    },
-    "content_scripts": [
-        {
-            "matches": ["<all_urls>"],
-            "js": [
-            "utilities.js",
-            "ai.js",
-            "teacher.js",
-            "class.js",
-            "stt.js",
-            "content.js"
-            ]
-        }
-    ]
-
+  "manifest_version": 3,
+  "name": "First Extension",
+  "version": "0.2.7",
+  "description": "My first Extension",
+  "permissions": [
+    "tabs",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:5000/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://akool.com/*",
+        "https://*.akool.com/*",
+        "https://speechtexter.com/*",
+        "https://*.speechtexter.com/*",
+        "https://nativecamp.net/*",
+        "https://*.nativecamp.net/*",
+        "https://127.0.0.1/walkie/*",
+        "http://127.0.0.1/walkie/*",
+        "https://localhost/walkie/*",
+        "http://localhost/walkie/*"
+      ],
+      "js": [
+        "utilities.js",
+        "logger.js",
+        "ai.js",
+        "teacher.js",
+        "class.js",
+        "handlers/dailynews.js",
+        "stt.js",
+        "content.js"
+      ]
+    }
+  ]
 }

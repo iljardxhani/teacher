@@ -1,23 +1,130 @@
 
 //-------------------
 
-function waitVideoFullyReady(selector = "video.css-m0a7mp", buffer = 1000) {
-  console.log("🔥 [DEBUG] waitVideoFullyReady stub. selector:", selector);
-  ch_traffic("b");
-  bg_listener();
-  setTimeout(() => {
-    console.log("🧪 [DEBUG] Synthetic videoloaded fired");
-    document.dispatchEvent(new Event("videoloaded"));
-  }, buffer);
+function teacherLog(event, data = {}, level = "info") {
+  try {
+    globalThis.AT?.log?.(event, data, level);
+  } catch (_) {
+    // ignore
+  }
 }
-function prepareModel() {
+
+function teacherUi(event, message, data = {}, opts = {}) {
+  try {
+    globalThis.AT?.uiLog?.(event, message, data, opts);
+  } catch (_) {
+    // ignore
+  }
+}
+
+function waitForVideoReady(selector = "video.css-m0a7mp", buffer = 1000) {
+  console.log("🔥 [DEBUG] waitForVideoReady start. selector:", selector);
+  setTrafficState("busy");
+  listenForTeacherMessages();
+
+  let done = false;
+  let pollId = null;
+  let observer = null;
+
+  const finish = reason => {
+    if (done) return;
+    done = true;
+    if (observer) observer.disconnect();
+    if (pollId) clearInterval(pollId);
+    console.log(`🧪 [DEBUG] video_ready fired (${reason})`);
+    document.dispatchEvent(new Event("video_ready"));
+  };
+
+  const isReady = video => {
+    if (!video) return false;
+    const readyState = video.readyState ?? 0;
+    const hasData = readyState >= (HTMLMediaElement?.HAVE_FUTURE_DATA ?? 3);
+    const hasDims = (video.videoWidth ?? 0) > 0 && (video.videoHeight ?? 0) > 0;
+    const hasSrc = Boolean(video.currentSrc || video.src);
+    return hasData && hasDims && hasSrc;
+  };
+
+  const watchVideo = video => {
+    if (!video) return;
+
+    if (isReady(video)) {
+      return finish("already ready");
+    }
+
+    const onReady = () => finish("ready event");
+    ["loadedmetadata", "canplay", "canplaythrough"].forEach(ev => {
+      video.addEventListener(ev, onReady, { once: true });
+    });
+
+    pollId = setInterval(() => {
+      if (isReady(video)) {
+        finish("readyState poll");
+      }
+    }, buffer);
+  };
+
+  const initial = document.querySelector(selector);
+  if (initial) {
+    watchVideo(initial);
+  } else {
+    observer = new MutationObserver(() => {
+      const video = document.querySelector(selector);
+      if (video) {
+        observer.disconnect();
+        watchVideo(video);
+      }
+    });
+    withBodyReady(body => observer.observe(body, { childList: true, subtree: true }));
+    console.log("👀 [DEBUG] waiting for video element to appear...");
+  }
+
+  // Fallback: if nothing becomes ready in a reasonable time, continue flow.
+  setTimeout(() => finish("fallback timeout"), buffer * 10);
+}
+
+function normalizeText(str = "") {
+  return str.replace(/[’]/g, "'").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function withBodyReady(cb, attempt = 0) {
+  const body = typeof document !== "undefined" ? document.body : null;
+  if (body) {
+    cb(body);
+    return;
+  }
+  if (attempt >= 50) {
+    console.warn("Body not ready; skipping observer setup.");
+    return;
+  }
+  setTimeout(() => withBodyReady(cb, attempt + 1), 100);
+}
+
+function findButtonByText(text) {
+  const target = normalizeText(text);
+  return Array.from(document.querySelectorAll("button, [role='button']")).find(btn => {
+    const content = normalizeText(btn.textContent || "");
+    const aria = normalizeText(btn.getAttribute("aria-label") || "");
+    const title = normalizeText(btn.getAttribute("title") || "");
+    return content.includes(target) || aria.includes(target) || title.includes(target);
+  });
+}
+
+function runWhenTrafficReady(task, label = "teacher-task") {
+  if (typeof runWhenTrafficFree === "function") {
+    runWhenTrafficFree(task, label);
+  } else {
+    task();
+  }
+}
+
+function initializeAvatarChat() {
   // Find the 'Repeat' button dynamically
   const repeatBtn = Array.from(document.querySelectorAll('.MuiTab-root'))
                          .find(btn => btn.innerText.trim() === "Repeat");
 
   if (!repeatBtn) {
     console.log("⚠️ Repeat button not found, retrying...");
-    return setTimeout(prepareModel, 500); // retry THIS function
+    return setTimeout(initializeAvatarChat, 500); // retry THIS function
   }
 
   const opts = { bubbles: true, cancelable: true, view: window };
@@ -31,12 +138,13 @@ function prepareModel() {
   console.log("🎯 Smart click fired on 'Repeat' button!");
 
   // Now look for Let's Chat button
-const chatBtn = Array.from(document.querySelectorAll('button.MuiButton-root'))
-  .find(btn => btn.textContent.includes("Let's chat"));
+  const chatBtn = Array.from(
+    document.querySelectorAll("button.MuiButton-containedPrimary.MuiButton-sizeSmall")
+  ).find(btn => btn.textContent.trim().includes("Let's chat"));
 
   if (!chatBtn) {
     console.log("⚠️ Let's chat button not found, retrying...");
-    return setTimeout(prepareModel, 500); // retry again until it exists
+    return setTimeout(initializeAvatarChat, 500); // retry again until it exists
   }
 
   chatBtn.dispatchEvent(new MouseEvent("mouseover", opts));
@@ -62,9 +170,9 @@ const chatBtn = Array.from(document.querySelectorAll('button.MuiButton-root'))
             obs.disconnect();
             console.log("✅ Chat input ready:", node);
             // Fire global event so you can hook anything after
-            document.dispatchEvent(new Event("model_semiprepered"));
-          }
+            document.dispatchEvent(new Event("chat_ready"));
         }
+      }
       }
       
     });
@@ -81,7 +189,7 @@ const chatBtn = Array.from(document.querySelectorAll('button.MuiButton-root'))
 waitForChatFrame()
 }
 
-function hide_chat() {
+function hideAvatarChatOverlay() {
   const opts = { bubbles: true, cancelable: true, view: window };
 
   // --- 1️⃣ Hide messages on avatar ---
@@ -93,38 +201,88 @@ function hide_chat() {
     console.log("🎯 Hidden messages overlay on avatar!");
 
     // --- 2️⃣ Fire global event ---
-    document.dispatchEvent(new Event("readforinput"));
-    console.log("🚀 Event 'readforinput' dispatched!");
+    document.dispatchEvent(new Event("teacher_input_ready"));
+    console.log("🚀 Event 'teacher_input_ready' dispatched!");
   } else {
     console.log("⚠️ Hide messages button not found, will retry...");
-    setTimeout(hide_chat, 500); // keep retrying THIS function
+    setTimeout(hideAvatarChatOverlay, 500); // keep retrying THIS function
     return;
   }
-  ch_traffic('f')
+  setTrafficState("free");
 }
 
-let bgListenerRegistered = false;
-let teacherPollTimer = null;
+let teacherListenerRegistered = false;
 const teacherProcessedMessageIds = new Set();
 const TEACHER_MAX_TRACKED = 200;
+let teacherLastInboundMeta = {};
 
 function resolveTeacherPage() {
-  if (typeof current_page !== "undefined") return current_page;
-  if (typeof page === "function") {
+  if (typeof detectPageRole === "function") {
     try {
-      return page();
+      return detectPageRole();
     } catch (err) {
-      console.warn("teacher.js: failed to resolve page():", err);
+      console.warn("teacher.js: failed to resolve detectPageRole():", err);
     }
   }
   return "unknown";
 }
 
+async function notifySttTeacherTurnFinished(contextMeta = {}, status = "done") {
+  const payload = {
+    kind: "teacher_turn_finished",
+    text: "teacher_turn_finished",
+    meta: {
+      source_role: "teacher",
+      ts_ms: Date.now(),
+      status: String(status || "done"),
+      flow_run_id: contextMeta?.flow_run_id || null,
+      ai_message_id: contextMeta?.ai_message_id || null,
+      source_segment_id: contextMeta?.source_segment_id || null,
+      source_kind: contextMeta?.source_kind || null,
+    },
+  };
+
+  let sent = false;
+  let via = "none";
+  try {
+    if (typeof sendRouterMessage === "function") {
+      via = "sendRouterMessage";
+      sent = await sendRouterMessage(payload, "stt");
+    } else if (typeof queueRouterMessage === "function") {
+      via = "queueRouterMessage";
+      queueRouterMessage(payload, "stt");
+      sent = true;
+    }
+  } catch (err) {
+    teacherLog("teacher_turn_finished_signal_error", {
+      via,
+      status,
+      err: String(err?.message || err),
+      flow_run_id: contextMeta?.flow_run_id || null,
+      source_segment_id: contextMeta?.source_segment_id || null,
+    }, "warn");
+    return false;
+  }
+
+  teacherLog(
+    sent ? "teacher_turn_finished_signal_sent" : "teacher_turn_finished_signal_failed",
+    {
+      via,
+      status,
+      flow_run_id: contextMeta?.flow_run_id || null,
+      source_segment_id: contextMeta?.source_segment_id || null,
+      ai_message_id: contextMeta?.ai_message_id || null,
+    },
+    sent ? "info" : "warn"
+  );
+  return sent;
+}
+
 function teacherMessageKey(payload) {
   if (!payload) return null;
   if (payload.id) return payload.id;
-  if (payload.text && payload.timestamp) return `${payload.text}|${payload.timestamp}`;
   if (typeof payload === "string") return payload;
+  if (payload.text) return payload.text;
   return JSON.stringify(payload);
 }
 
@@ -139,115 +297,272 @@ function teacherIsDuplicate(payload) {
   }
   return false;
 }
-
 function processTeacherPayload(label, payload) {
   if (!payload) return;
   if (teacherIsDuplicate(payload)) {
     console.log("↩️ teacher duplicate ignored:", { label, payload });
+    teacherLog("teacher_duplicate_ignored", { label, payload_id: payload?.id || null });
     return;
   }
+
+  // Normalize the payload to the inner message if wrapped.
+  const normalized = payload.message || payload;
+
+  console.log("📨 Received message for teacher:", normalized);
+  // Safety: if the traffic flag is stuck in "busy" due to a missed init, unlock when not streaming.
+  try {
+    if (typeof setTrafficState === "function" && typeof isStreamingNow === "function" && !isStreamingNow()) {
+      setTrafficState("free");
+    }
+  } catch (_) {
+    // ignore
+  }
+  try {
+    const runId = (normalized && typeof normalized === "object") ? normalized?.meta?.flow_run_id : null;
+    if (runId && typeof globalThis.AT?.setRunId === "function") {
+      globalThis.AT.setRunId(runId, "log");
+    }
+  } catch (_) {
+    // ignore
+  }
+  teacherUi(
+    "teacher_inbound",
+    "Teacher: inbound message",
+    { label, id: normalized?.id || null, text_len: typeof normalized === "string" ? normalized.length : (normalized?.text || "").length }
+  );
+  teacherLog("teacher_inbound", { label, normalized });
 
   const text =
-    typeof payload === "string"
-      ? payload
-      : payload?.text ?? JSON.stringify(payload);
+    typeof normalized === "string"
+      ? normalized
+      : normalized?.text ?? JSON.stringify(normalized);
+  teacherLastInboundMeta = {
+    flow_run_id: normalized?.meta?.flow_run_id || null,
+    ai_message_id: normalized?.id || null,
+    source_segment_id:
+      normalized?.meta?.source_segment_id ||
+      normalized?.meta?.segment_id ||
+      null,
+    source_kind: normalized?.meta?.source_kind || normalized?.kind || null,
+  };
+  enqueueTeacherSend(text, teacherLastInboundMeta);
 
-  console.log("🤖➡️👩‍🏫 AI says:", {
-    label,
-    id: payload?.id,
-    text,
-    raw: payload
-  });
-  sendMessageToModel(text);
 }
 
-function bg_listener() {
-  if (bgListenerRegistered) return;
-  bgListenerRegistered = true;
-
-  chrome.runtime.onMessage.addListener(msg => {
-    console.log("📨 Incoming extension message:", msg);
-
-    if (msg.to === "teacher" && msg.from === "ai") {
-      processTeacherPayload("direct-message", msg.message);
-    }
-  });
-}
-
-async function pollTeacherRouteMessages() {
-  const pageName = resolveTeacherPage();
-  if (pageName !== "teacher") {
-    teacherPollTimer = setTimeout(pollTeacherRouteMessages, 2000);
+function listenForTeacherMessages() {
+  if (!(typeof chrome !== "undefined" && chrome.runtime?.onMessage?.addListener)) {
+    console.warn("chrome.runtime.onMessage unavailable; teacher listener skipped.");
     return;
   }
 
-  try {
-    const res = await fetch("http://127.0.0.1:5000/get_messages/teacher");
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    const messages = data.messages || [];
-    if (messages.length > 0) {
-      messages.forEach(msg => {
-        const payload = msg?.message ?? msg;
-        processTeacherPayload("route-poll", payload);
-      });
+  if (teacherListenerRegistered) return;
+  teacherListenerRegistered = true;
+
+  chrome.runtime.onMessage.addListener(msg => {
+    if (msg.to === "teacher" && msg.from === "ai") {
+      runWhenTrafficReady(() =>
+        processTeacherPayload("direct-message", msg.message),
+        "teacher-onMessage"
+      );
     }
-  } catch (err) {
-    console.error("teacher.js: route poll failed:", err);
+  });
+}
+
+function teacherSleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function waitForTrafficFreePromise(label = "teacher-wait") {
+  return new Promise(resolve => {
+    if (typeof runWhenTrafficFree === "function") {
+      runWhenTrafficFree(resolve, label);
+    } else {
+      resolve();
+    }
+  });
+}
+
+let teacherSendChain = Promise.resolve();
+function enqueueTeacherSend(text, contextMeta = {}) {
+  if (typeof text !== "string" || text.trim() === "") return;
+  teacherLog("teacher_queue_send", {
+    text_len: text.length,
+    flow_run_id: contextMeta?.flow_run_id || null,
+    source_segment_id: contextMeta?.source_segment_id || null,
+  });
+  teacherSendChain = teacherSendChain
+    .catch(err => console.warn("teacherSendChain: previous error:", err))
+    .then(async () => {
+      await waitForTrafficFreePromise("teacher-queue");
+      // Don't try to inject/send while the avatar is already streaming.
+      await waitForCondition(() => !isStreamingNow(), {
+        timeoutMs: 90000,
+        intervalMs: 250,
+        label: "wait-not-streaming"
+      });
+      teacherUi("teacher_send", "Teacher: sending to avatar", { text_len: text.length });
+      await sendAvatarMessage(text, contextMeta);
+    });
+}
+
+function isStreamingNow() {
+  // Fallback to DOM in case the MutationObserver lags.
+  const selector = "button[aria-label='stop'] svg[data-name='pause']";
+  return Boolean(isAvatarStreaming || document.querySelector(selector));
+}
+
+async function waitForCondition(cond, { timeoutMs = 15000, intervalMs = 250, label = "condition" } = {}) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    let ok = false;
+    try {
+      ok = Boolean(cond());
+    } catch (err) {
+      console.warn(`waitForCondition(${label}) threw:`, err);
+    }
+    if (ok) return true;
+    await teacherSleep(intervalMs);
+  }
+  console.warn(`waitForCondition(${label}) timed out after ${timeoutMs}ms`);
+  return false;
+}
+
+async function findTeacherInput(timeoutMs = 20000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const textarea = document.querySelector("textarea.input-container");
+    if (textarea) return { el: textarea, kind: "textarea" };
+    const editable = document.querySelector("div#prompt-textarea[contenteditable='true']");
+    if (editable) return { el: editable, kind: "contenteditable" };
+    await teacherSleep(250);
+  }
+  return null;
+}
+
+async function findTeacherSendButton(timeoutMs = 20000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const sendBtn = Array.from(document.querySelectorAll("button"))
+      .find(btn => btn.querySelector("svg[data-name='send-msg']"));
+    if (sendBtn) return sendBtn;
+    await teacherSleep(250);
+  }
+  return null;
+}
+
+async function sendAvatarMessage(message, contextMeta = {}) {
+  const textToInsert = String(message || "").trim();
+  if (!textToInsert) return false;
+
+  if (typeof setTrafficState === "function") {
+    setTrafficState("busy");
   }
 
-  teacherPollTimer = setTimeout(pollTeacherRouteMessages, 1000);
-}
+  let clickedSend = false;
+  let turnStatus = "started";
+  try {
+    // Small buffer so the UI has time to settle before we query.
+    await teacherSleep(300);
 
-
-function sendMessageToModel(message) {
-  setTimeout(() => {
-    const textToInsert = message;
-    const textarea = 
-    document.querySelector("textarea.input-container") || 
-    document.querySelector("div#prompt-textarea[contenteditable='true']");
-
-    if (textarea) {
-      // Smart type
-      textarea.value = textToInsert;
-      textarea.dispatchEvent(new Event("input", { bubbles: true }));
-      console.log("✍️ Inserted text:", textToInsert);
-
-      // Find send button (the one with send-msg icon)
-      const sendBtn = Array.from(document.querySelectorAll("button"))
-        .find(btn => btn.querySelector("svg[data-name='send-msg']"));
-
-      if (sendBtn) {
-        const opts = { bubbles: true, cancelable: true, view: window };
-        sendBtn.dispatchEvent(new MouseEvent("mouseover", opts));
-        sendBtn.dispatchEvent(new MouseEvent("mousedown", opts));
-        sendBtn.dispatchEvent(new MouseEvent("mouseup", opts));
-        sendBtn.dispatchEvent(new MouseEvent("click", opts));
-        console.log("📨 Smart click fired on send button!");
-        function finishted(){
-          if (!modelStreaming) {
-          document.dispatchEvent(new Event("finishStreaming"));
-          console.log("Streaming finishted!")
-            ch_traffic('f')
-          } else {
-            finishted()
-          }
-        }
-        finishted()
-        
-      } else {
-        console.log("⚠️ Send button not found!");
-      }
-    } else {
-      console.log("⚠️ Textarea not found!");
+    const input = await findTeacherInput(20000);
+    if (!input?.el) {
+      turnStatus = "input_missing";
+      console.warn("⚠️ Teacher input not found; dropping message.");
+      teacherUi("teacher_input_missing", "Teacher: input not found", {}, { level: "warn", ttlMs: 6500 });
+      teacherLog("teacher_input_missing", {}, "warn");
+      return false;
     }
-  }, 2000); // 1s buffer
 
+    try {
+      input.el.focus?.();
+    } catch (_) {
+      // ignore
+    }
 
+    // Insert text in a way that works for both textarea and contenteditable.
+    if (input.kind === "textarea") {
+      input.el.value = textToInsert;
+      input.el.dispatchEvent(new Event("input", { bubbles: true }));
+    } else {
+      input.el.textContent = textToInsert;
+      if (typeof InputEvent === "function") {
+        input.el.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      } else {
+        input.el.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    }
+    console.log("✍️ Inserted text:", textToInsert);
+
+    const sendBtn = await findTeacherSendButton(20000);
+    if (!sendBtn) {
+      turnStatus = "send_button_missing";
+      console.warn("⚠️ Send button not found; dropping message.");
+      teacherUi("teacher_send_button_missing", "Teacher: send button not found", {}, { level: "warn", ttlMs: 6500 });
+      teacherLog("teacher_send_button_missing", {}, "warn");
+      return false;
+    }
+
+    const opts = { bubbles: true, cancelable: true, view: window };
+    ["mouseover", "mousedown", "mouseup", "click"].forEach(ev => {
+      sendBtn.dispatchEvent(new MouseEvent(ev, opts));
+    });
+    clickedSend = true;
+    console.log("📨 Smart click fired on send button!");
+
+    // Wait for a full streaming cycle. Don't assume it starts immediately.
+    const started = await waitForCondition(() => isStreamingNow(), {
+      timeoutMs: 12000,
+      intervalMs: 250,
+      label: "avatar-stream-start"
+    });
+
+    if (!started) {
+      // Sometimes the UI doesn't show a stream indicator; avoid unlocking instantly.
+      await teacherSleep(1500);
+      turnStatus = "no_stream_indicator";
+    } else {
+      await waitForCondition(() => !isStreamingNow(), {
+        timeoutMs: 90000,
+        intervalMs: 250,
+        label: "avatar-stream-end"
+      });
+      turnStatus = "stream_finished";
+    }
+
+    document.dispatchEvent(new Event("avatar_stream_finished"));
+    if (turnStatus === "started") turnStatus = "completed";
+    return true;
+  } catch (err) {
+    turnStatus = "error";
+    console.warn("sendAvatarMessage failed:", err);
+    teacherUi(
+      "teacher_send_failed",
+      "Teacher: send failed",
+      { err: String(err?.message || err) },
+      { level: "warn", ttlMs: 6500 }
+    );
+    teacherLog("teacher_send_failed", { err: String(err?.message || err) }, "warn");
+    if (clickedSend) {
+      document.dispatchEvent(new Event("avatar_stream_finished"));
+    }
+    return false;
+  } finally {
+    await notifySttTeacherTurnFinished(contextMeta || teacherLastInboundMeta || {}, turnStatus);
+    if (typeof setTrafficState === "function") {
+      setTrafficState("free");
+    }
+  }
 }
 
 
-function watchForAlertDialog() {
+
+
+
+
+
+
+
+function watchSessionDialog() {
   const targetSelector = "div[role='dialog'] .MuiTypography-body1";
 
   const observer = new MutationObserver(() => {
@@ -267,33 +582,33 @@ function watchForAlertDialog() {
     
   });
 
-  observer.observe(document.body, { childList: true, subtree: true });
+  withBodyReady(body => observer.observe(body, { childList: true, subtree: true }));
   console.log("👀 Watching for session break dialog...");
 }
 
 // --- Global variable ---
-let modelStreaming = false;
+let isAvatarStreaming = false;
 
-function watchModelStreaming() {
+function watchAvatarStreaming() {
   const selector = "button[aria-label='stop'] svg[data-name='pause']";
 
   const observer = new MutationObserver(() => {
     const isStreaming = !!document.querySelector(selector);
 
-    if (isStreaming && !modelStreaming) {
-      modelStreaming = true;
-      console.log("🎥 Model streaming started → modelStreaming =", modelStreaming);
-    } else if (!isStreaming && modelStreaming) {
-      modelStreaming = false;
-      console.log("⏹️ Model streaming stopped → modelStreaming =", modelStreaming);
+    if (isStreaming && !isAvatarStreaming) {
+      isAvatarStreaming = true;
+      console.log("🎥 Model streaming started → isAvatarStreaming =", isAvatarStreaming);
+    } else if (!isStreaming && isAvatarStreaming) {
+      isAvatarStreaming = false;
+      console.log("⏹️ Model streaming stopped → isAvatarStreaming =", isAvatarStreaming);
     }
   });
 
-  observer.observe(document.body, { childList: true, subtree: true });
+  withBodyReady(body => observer.observe(body, { childList: true, subtree: true }));
   console.log("👀 Watching DOM for model streaming state...");
 }
 
-function reload(){
+function reloadWhenTimerLow(){
   const observer = new MutationObserver(() => {
     // Look for the timer element
     const timer = document.querySelector(
@@ -312,12 +627,12 @@ function reload(){
     }
   });
 
-  observer.observe(document.body, { childList: true, subtree: true });
+  withBodyReady(body => observer.observe(body, { childList: true, subtree: true }));
   console.log("👀 Watching countdown timer...");
 
 }
 
-function reloadWhenCritical() {
+function reloadWhenCriticalTime() {
   const observer = new MutationObserver(() => {
     const timer = document.querySelector(
       ".MuiTypography-root.MuiTypography-caption-m.css-64kod5"
@@ -332,7 +647,7 @@ function reloadWhenCritical() {
         console.log(`⚠️ Critical time (${timeText}) reached!`);
 
         const waitAndReload = () => {
-          if (!modelStreaming) {
+          if (!isAvatarStreaming) {
             console.log("⏱ Not streaming → Reloading page now!");
             location.reload();
           } else {
@@ -346,27 +661,23 @@ function reloadWhenCritical() {
     }
   });
 
-  observer.observe(document.body, { childList: true, subtree: true });
+  withBodyReady(body => observer.observe(body, { childList: true, subtree: true }));
   console.log("👀 Watching countdown timer for critical reload...");
 }
 
 
-function feedModel(){
-  waitVideoFullyReady();
-  watchForAlertDialog();
-  watchModelStreaming();
-  document.addEventListener("videoloaded", prepareModel, { once: true })
-  document.addEventListener("model_semiprepered", hide_chat, { once: true })
-  document.addEventListener("readforinput", bg_listener, { once: true })
-  document.addEventListener("finishStreaming", reload, { once: true })
-}
-
-if (resolveTeacherPage() === "teacher") {
-  bg_listener();
-  pollTeacherRouteMessages();
+function runTeacherAutomation(){
+  waitForVideoReady();
+  watchSessionDialog();
+  watchAvatarStreaming();
+  document.addEventListener("video_ready", initializeAvatarChat, { once: true });
+  document.addEventListener("chat_ready", hideAvatarChatOverlay, { once: true });
+  document.addEventListener("teacher_input_ready", listenForTeacherMessages, { once: true });
+  document.addEventListener("avatar_stream_finished", reloadWhenTimerLow, { once: true });
 }
 
 // Ensure we always listen for backend messages even if other hooks fail.
-if (typeof current_page !== "undefined" && current_page === "teacher") {
-  bg_listener();
+// (Keep it idempotent; listenForTeacherMessages() is guarded.)
+if (resolveTeacherPage() === "teacher") {
+  listenForTeacherMessages();
 }

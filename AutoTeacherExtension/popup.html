@@ -4,16 +4,24 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="popup.css">
-    <title>Document</title>
+    <title>AutoTeacher</title>
 </head>
 <body>
   <div class="container">
-    <h1>💀 System Override</h1>
-    <button id="terminateBtn">TERMINATE</button>
-    <p id="status"></p>
+    <div class="row">
+      <div class="label">Extension</div>
+      <div id="extVersion" class="value">?</div>
+    </div>
+    <div class="row">
+      <div class="label">Active page</div>
+      <div id="pageRole" class="value">unknown</div>
+    </div>
+    <div id="status" class="status"></div>
+    <div id="classActions" class="actions hidden">
+      <button id="btnSendMessage" class="btn">Send Message</button>
+    </div>
   </div>
 
   <script src="popup.js"></script>
-</body>
 </body>
 </html>

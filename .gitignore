@@ -1,3 +1,9 @@
-tools-venv/
+.venv/
 __pycache__/
 ~
+.route.log
+logs/
+.tools/
+certs/*.pem
+.runtime/
+*.bundle

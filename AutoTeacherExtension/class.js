@@ -1,22 +1,32 @@
-async function checkAllBoxes() {
+async function acceptAllCheckboxes() {
     let checkboxes = document.querySelectorAll(".request_detail input[type='checkbox']");
     if (checkboxes.length === 0) {
       console.log("No checkboxes found!");
+      try {
+        globalThis.AT?.uiLog?.("class_accept_none", "Class: no request checkboxes found", {});
+      } catch (_) {
+        // ignore
+      }
       return;
     }
 
     for (let cb of checkboxes) {
       if (!cb.checked) {
-        await sleep(500);
+        await delay(500);
         cb.click();
         console.log("Checked one box ✅");
-        await sleep(200); // wait 0.5 seconds between clicks
+        try {
+          globalThis.AT?.uiLog?.("class_accept_checkbox_click", "Class: checked request box", {});
+        } catch (_) {
+          // ignore
+        }
+        await delay(200); // wait 0.5 seconds between clicks
       }
     }
 
     console.log("All boxes checked ✅");
 
-    await sleep(500)
+    await delay(500)
     let modal = document.querySelector("#dialog_lesson_length_cfm");
 
     if (modal) {
@@ -25,35 +35,72 @@ async function checkAllBoxes() {
       if (ok_btn) {
         ok_btn.click(); // safely click the button
         console.log("Modal OK button clicked ✅");
+        try {
+          globalThis.AT?.uiLog?.("class_accept_modal_ok", "Class: lesson modal OK clicked", {});
+        } catch (_) {
+          // ignore
+        }
       } else {
         console.log("OK button not found inside modal!");
       }
     } else {
       console.log("Modal not found!");
     }
-  }
+}
 
-let iframeDocument;
-function waitForIframeContent(selector = ".tb-cat-list") {
+let textbookFrameDocument;
+
+function waitForTextbookIframe(selector = "body") {
     const iframe = document.querySelector("#textbook-iframe");
     if (!iframe) {
         // Retry if iframe not yet in DOM
-        setTimeout(() => waitForIframeContent(selector), 500);
+        setTimeout(() => waitForTextbookIframe(selector), 500);
         return;
     } else{
       console.log("Iframe found")
     }
+
+    // Consider it "ready" once the iframe document exists and a basic selector is present.
+    // Textbook handlers are responsible for waiting until the actual text is non-empty.
+    let effectiveSelector = selector;
     function checkIframeDoc() {
-        const doc = iframe.contentDocument || iframe.contentWindow?.document;
+        let doc = null;
+        try {
+          doc = iframe.contentDocument || iframe.contentWindow?.document;
+        } catch (err) {
+          console.warn("⚠️ Failed to access iframe document:", err);
+          try {
+            globalThis.AT?.uiLog?.(
+              "class_iframe_access_error",
+              "Class: cannot access iframe document",
+              { err: String(err?.message || err) },
+              { level: "warn", ttlMs: 6500 }
+            );
+          } catch (_) {
+            // ignore
+          }
+          setTimeout(checkIframeDoc, 500);
+          return;
+        }
         if (!doc) {
             setTimeout(checkIframeDoc, 500);
             return;
         }
-        const target = doc.querySelector(selector);
+        const target = doc.querySelector(effectiveSelector);
+        // Consider it ready when the element exists. Textbook handlers will retry until the
+        // content is readable (prevents hanging forever on transient empty text).
         if (target) {
-            iframeDocument = doc;
+            textbookFrameDocument = doc;
             // ✅ First log everything we need internally
             console.log("✅ Iframe content fully ready ✅");
+            try {
+              globalThis.AT?.uiLog?.("class_iframe_ready", "Class: iframe ready", {
+                selector: effectiveSelector,
+                url: window.location.href
+              });
+            } catch (_) {
+              // ignore
+            }
 
             // ✅ Then fire the custom event
             document.dispatchEvent(new Event("iframeloaded"));
@@ -70,90 +117,274 @@ function waitForIframeContent(selector = ".tb-cat-list") {
     }
 }
 
-let bookType;
-function textbookType(){
+let textbookTypeName;
+async function detectTextbookType(ctx = {}){
   let iframe = document.querySelector('#textbook-iframe');
-  const iframe_body = iframeDocument.body;
-  const article = iframeDocument.querySelector("article")
-  const test = iframeDocument.querySelector(".student_hide")
+  if (!iframe) {
+    console.warn("⚠️ detectTextbookType: iframe not found");
+    return { ok: false, error: "iframe_not_found" };
+  }
   const htmlDirectory = iframe.getAttribute("html-directory")
+  if (!htmlDirectory) {
+    console.warn("⚠️ detectTextbookType: html-directory missing");
+    return { ok: false, error: "textbook_type_missing" };
+  }
 
-  bookType = htmlDirectory
-  console.log("🔥 Textbook type: " + bookType)
-  //Execute the corresponding function to operate the Textbook
-  window[bookType]();
-
-}
-
-
-/// content.js
-// Simplified fetch helper
-async function fetchFile(docName) {
-  const url = chrome.runtime.getURL(`web_accessible_resources/${docName}`);
-  
+  textbookTypeName = htmlDirectory
+  console.log("🔥 Textbook type: " + textbookTypeName)
   try {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const text = await res.text();
-    return text; // just return the string, no verbose debug
-  } catch (err) {
-    console.error(`Failed to fetch ${docName}:`, err);
-    return null;
+    globalThis.AT?.uiLog?.("textbook_detected", `Textbook: ${textbookTypeName}`, {
+      textbookTypeName,
+      htmlDirectory,
+      iframe_src: iframe?.getAttribute("src") || iframe?.src || null
+    });
+  } catch (_) {
+    // ignore
   }
-}
-
-// Fetch & log wrapper
-async function fetchAndLogDoc(docName) {
-  const content = await fetchFile(docName);
-  console.log(`📄 ${docName}:`, content ? `[length: ${content.length}]` : 'null');
-  return content;
-}
-
-
-
-// OPEARTING BOOKS
-let textbookContent = "";
-
-async function daily_news() {
-  console.log("Started Terminating Daily News");
-
-  const article = iframeDocument.querySelector("article");
-  if (article) {
-    textbookContent = article.innerText
-      .replace(/[ \t]+/g, " ")        // collapse multiple spaces/tabs
-      .split("\n")                    // split lines
-      .map(line => line.trim())       // trim each line
-      .filter(line => line.length > 0) // drop empty lines
-      .join("\n");                    // rebuild clean text
-    console.log("🔥 Textbook Content:\n", textbookContent);
+  //Execute the corresponding function to operate the Textbook
+  const handler = window[textbookTypeName];
+  if (typeof handler === "function") {
+    const extra = (ctx && typeof ctx === "object") ? ctx : {};
+    const handlerResult = await Promise.resolve(
+      handler({ ...extra, book_type: textbookTypeName, bookType: textbookTypeName })
+    );
+    return {
+      ok: true,
+      bookType: textbookTypeName,
+      handler: textbookTypeName,
+      handler_result: handlerResult
+    };
   } else {
-    console.warn("⚠️ No <article> element found in iframe.");
+    console.warn("⚠️ No handler registered for textbook type:", textbookTypeName);
+    return { ok: false, error: "handler_missing", bookType: textbookTypeName };
   }
-
-  // Fetch files sequentially
-  const mainPrompt = await fetchAndLogDoc('mainPromt.txt') || "";
-  const dailyNews = await fetchAndLogDoc('dailynews.txt') || "";
-
-  // Build message
-  const msgBuild = `${mainPrompt}\n\n
-  The demo lesson for this type of textbook (${bookType}):\n\n
-  ${dailyNews}\n\n
-  This is the end of demo lesson. After you learned the flow and drill, you
-  must learn the actual textbook content of today:\n
-  ${textbookContent}\n
-  Now you are ready to greet the student! The student is listening, say hello.
-  `;
-
-  console.log("📬 Final Message:\n", msgBuild);
 }
 
+async function runClassTextbookFlow(opts = {}) {
+  const mode = String(opts?.mode || "send").toLowerCase() === "send" ? "send" : "prepare";
+  const intervalMs = Math.max(100, Number(opts?.intervalMs) || 500);
+  const maxAttempts = Math.max(1, Number(opts?.maxAttempts) || 120);
+  const source = String(opts?.source || "class_flow");
+  const detectCtx = (opts?.ctx && typeof opts.ctx === "object") ? opts.ctx : {};
+
+  if (runClassTextbookFlow._inFlight) {
+    try {
+      globalThis.AT?.uiLog?.(
+        "class_flow_in_flight",
+        "Class: flow already running",
+        { source, mode },
+        { level: "warn", ttlMs: 3500 }
+      );
+    } catch (_) {
+      // ignore
+    }
+    return { ok: false, error: "in_flight" };
+  }
+  runClassTextbookFlow._inFlight = true;
+
+  try {
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const iframe = document.querySelector("#textbook-iframe");
+      if (!iframe) {
+        if (attempt === 1 || attempt % 10 === 0) {
+          try {
+            globalThis.AT?.uiLog?.(
+              "class_flow_wait_iframe",
+              "Class: waiting for textbook iframe",
+              { source, mode, attempt, maxAttempts }
+            );
+          } catch (_) {
+            // ignore
+          }
+        }
+        await delay(intervalMs);
+        continue;
+      }
+
+      // Kick iframe tracking so textbookFrameDocument gets captured ASAP.
+      try {
+        if (typeof waitForTextbookIframe === "function") waitForTextbookIframe("body");
+      } catch (_) {
+        // ignore
+      }
+
+      const htmlDirectory = iframe.getAttribute("html-directory") || "";
+      if (!htmlDirectory) {
+        if (attempt === 1 || attempt % 10 === 0) {
+          try {
+            globalThis.AT?.uiLog?.(
+              "class_flow_wait_textbook_type",
+              "Class: waiting for textbook type",
+              { source, mode, attempt, maxAttempts }
+            );
+          } catch (_) {
+            // ignore
+          }
+        }
+        await delay(intervalMs);
+        continue;
+      }
+
+      const result = await detectTextbookType({ ...detectCtx, mode, source });
+      if (result?.ok) {
+        const handlerResult = result?.handler_result;
+        const handlerSendOk = mode !== "send"
+          ? true
+          : (
+            (handlerResult && typeof handlerResult === "object" && (handlerResult.ok === true || handlerResult.skipped === true))
+            || handlerResult === true
+          );
+
+        if (!handlerSendOk) {
+          if (attempt === 1 || attempt % 10 === 0) {
+            try {
+              globalThis.AT?.uiLog?.(
+                "class_flow_handler_retry",
+                "Class: handler did not send yet, retrying",
+                { source, mode, attempt, maxAttempts, book_type: result.bookType || htmlDirectory, handler_result: handlerResult }
+              );
+            } catch (_) {
+              // ignore
+            }
+          }
+          await delay(intervalMs);
+          continue;
+        }
+
+        try {
+          globalThis.AT?.uiLog?.(
+            "class_flow_detect_ok",
+            `Class: detectTextbook ok (${result.bookType || htmlDirectory})`,
+            {
+              source,
+              mode,
+              attempt,
+              maxAttempts,
+              book_type: result.bookType || htmlDirectory,
+              handler_result: handlerResult
+            }
+          );
+        } catch (_) {
+          // ignore
+        }
+        return {
+          ok: true,
+          source,
+          mode,
+          book_type: result.bookType || htmlDirectory,
+          attempts: attempt
+        };
+      }
+
+      if (attempt === 1 || attempt % 10 === 0) {
+        try {
+          globalThis.AT?.uiLog?.(
+            "class_flow_detect_retry",
+            "Class: detectTextbook retry",
+            { source, mode, attempt, maxAttempts, result }
+          );
+        } catch (_) {
+          // ignore
+        }
+      }
+      await delay(intervalMs);
+    }
+
+    try {
+      globalThis.AT?.uiLog?.(
+        "class_flow_detect_timeout",
+        "Class: detectTextbook timed out",
+        { source, mode, maxAttempts },
+        { level: "warn", ttlMs: 6500 }
+      );
+    } catch (_) {
+      // ignore
+    }
+    return { ok: false, error: "detect_timeout", source, mode, attempts: maxAttempts };
+  } finally {
+    runClassTextbookFlow._inFlight = false;
+  }
+}
+runClassTextbookFlow._inFlight = false;
+
+// Shared helper used by popup/manual path and automatic watcher path.
+window.runClassTextbookFlow = runClassTextbookFlow;
 
 
-function startTeaching(){
-  checkAllBoxes();
-  waitForIframeContent();
-  document.addEventListener("iframeloaded", () => {
-    console.log("Iframe is ready globally!");
-    textbookType()
-  });
+// Textbook-specific handlers live under `AutoTeacherExtension/handlers/`.
+// They should send a `lesson_package` to the local router; the server injects the
+// rule prompt from `book_rules/` and then forwards to the AI tab.
+
+function startClassAutomation(opts = {}){
+  const mode = String(opts?.mode || "send").toLowerCase();
+  const fireDetect = () => {
+    if (typeof runClassTextbookFlow === "function" && runClassTextbookFlow._inFlight) {
+      try {
+        globalThis.AT?.uiLog?.(
+          "class_flow_skip_duplicate_trigger",
+          "Class: flow already running, skip duplicate trigger",
+          { source: "startClassAutomation", mode }
+        );
+      } catch (_) {
+        // ignore
+      }
+      return;
+    }
+    runClassTextbookFlow({ mode, source: "startClassAutomation" }).catch(err => {
+      console.warn("runClassTextbookFlow() failed:", err);
+    });
+  };
+
+  if (startClassAutomation._started) {
+    console.log("startClassAutomation() already started; re-triggering detectTextbookType().");
+    try {
+      globalThis.AT?.uiLog?.("class_flow_restart", "Class: re-triggering flow", {});
+    } catch (_) {
+      // ignore
+    }
+    try {
+      if (typeof detectTextbookType === "function") {
+        // If iframe doc is ready, fire immediately. Otherwise wait and then fire.
+        if (typeof textbookFrameDocument !== "undefined" && textbookFrameDocument?.body) {
+          setTimeout(fireDetect, 500);
+        } else {
+          document.addEventListener("iframeloaded", () => {
+            setTimeout(fireDetect, 500);
+          }, { once: true });
+          waitForTextbookIframe("body");
+        }
+      }
+    } catch (err) {
+      console.warn("startClassAutomation restart failed:", err);
+    }
+    return;
+  }
+  startClassAutomation._started = true;
+
+  // TEMPORARY: Delay class automation start so NativeCamp can fully render the class UI/iframe.
+  // Remove once we have a reliable "class page ready" signal.
+  setTimeout(() => {
+    try {
+      globalThis.AT?.uiLog?.("class_flow_start", "Class: starting flow", { url: window.location.href, mode });
+    } catch (_) {
+      // ignore
+    }
+    try {
+      acceptAllCheckboxes();
+    } catch (err) {
+      console.warn("acceptAllCheckboxes() failed:", err);
+    }
+
+    // Listen before kicking the iframe polling to avoid missing a fast iframeloaded dispatch.
+    document.addEventListener("iframeloaded", () => {
+      console.log("Iframe is ready globally!");
+      setTimeout(fireDetect, 500);
+    }, { once: true });
+
+    try {
+      waitForTextbookIframe("body");
+    } catch (err) {
+      console.warn("waitForTextbookIframe() failed:", err);
+    }
+  }, 2000);
 }

@@ -1,47 +1,82 @@
+/* Plain, minimal popup UI (no "hacker" styling). */
+
+* {
+  box-sizing: border-box;
+}
+
 body {
-  background-color: #0d0d0d;
-  color: #00ff88;
-  font-family: 'Courier New', monospace;
-  text-align: center;
   margin: 0;
-  padding: 30px;
-  overflow: hidden;
+  padding: 12px;
+  background: #f6f7f9;
+  color: #111;
+  font: 13px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
 }
 
 .container {
-  border: 2px solid #00ff88;
+  width: 320px;
+  background: #fff;
+  border: 1px solid #d7dbe2;
   border-radius: 10px;
-  padding: 25px;
-  box-shadow: 0 0 25px #00ff88;
-  background: radial-gradient(circle at center, #001a0f 0%, #000000 90%);
+  padding: 12px;
 }
 
-h1 {
-  text-shadow: 0 0 10px #00ff88;
-  letter-spacing: 2px;
+.row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
 }
 
-button {
-  background-color: transparent;
-  color: #00ff88;
-  border: 2px solid #00ff88;
+.label {
+  color: #555;
+}
+
+.value {
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.status {
+  margin-top: 8px;
+  min-height: 18px;
+  color: #666;
+}
+
+.actions {
+  margin-top: 10px;
+}
+
+.hidden {
+  display: none;
+}
+
+.btn {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #c9ced7;
   border-radius: 8px;
-  padding: 10px 25px;
-  font-size: 1.1rem;
+  background: #f3f5f8;
+  color: #111;
   cursor: pointer;
-  margin-top: 20px;
-  transition: all 0.2s ease;
 }
 
-button:hover {
-  background-color: #00ff88;
-  color: #000;
-  box-shadow: 0 0 20px #00ff88;
-  transform: scale(1.1);
+.btn + .btn {
+  margin-top: 8px;
 }
 
-#status {
-  margin-top: 15px;
-  font-size: 0.9rem;
-  opacity: 0.7;
+.btn:hover {
+  background: #eceff4;
+}
+
+.out {
+  margin-top: 10px;
+  max-height: 220px;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid #e3e7ee;
+  border-radius: 8px;
+  background: #fafbfc;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }

@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Walkie Receiver</title>
+  <style>
+    :root {
+      --bg: #0e1216;
+      --card: #171d24;
+      --text: #f2f5f7;
+      --muted: #93a0ab;
+      --ok: #35d07f;
+      --warn: #f9b84a;
+      --accent: #3ea8ff;
+      --border: #2a3542;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      background: radial-gradient(1200px 600px at 20% -10%, #1d2c3d 0%, var(--bg) 55%);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .wrap {
+      max-width: 900px;
+      margin: 0 auto;
+      display: grid;
+      gap: 14px;
+    }
+    .card {
+      background: rgba(23, 29, 36, 0.95);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    h1 { margin: 0 0 8px; font-size: 24px; }
+    .muted { color: var(--muted); }
+    .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .pill {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-size: 13px;
+      color: var(--muted);
+      background: #101720;
+    }
+    .pill.ok { color: var(--ok); border-color: #2b6a4a; }
+    .pill.warn { color: var(--warn); border-color: #6a562b; }
+    .pair {
+      font-size: 42px;
+      letter-spacing: 6px;
+      margin: 8px 0;
+      font-weight: 700;
+      color: #ffffff;
+    }
+    button {
+      border: 1px solid #2e6a98;
+      background: #1f5f8f;
+      color: #fff;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 15px;
+      cursor: pointer;
+    }
+    button:hover { filter: brightness(1.08); }
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      background: #0d141d;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      color: #b9c6d2;
+      font-size: 12px;
+      max-height: 220px;
+      overflow: auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Walkie Receiver (Class Tab)</h1>
+      <div class="muted">TEMP_WALKIE_MODE: this page receives phone voice and plays it in the class tab.</div>
+      <div class="row" style="margin-top:10px">
+        <span id="securePill" class="pill">secure-context: checking</span>
+        <span id="sessionPill" class="pill">session: idle</span>
+        <span id="connPill" class="pill">webrtc: idle</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="muted">Pair Code (enter this on phone transmitter):</div>
+      <div id="pairCode" class="pair">------</div>
+      <div class="row">
+        <button id="armBtn">Arm Audio Output</button>
+        <span id="armState" class="muted">not armed</span>
+      </div>
+      <div class="muted" style="margin-top:8px">Transmitter URL: <span id="txUrl">loading...</span></div>
+    </div>
+
+    <div class="card">
+      <div><strong>Last PTT:</strong> <span id="pttState">none</span></div>
+      <div class="muted">Last update: <span id="pttTs">-</span></div>
+    </div>
+
+    <div class="card">
+      <div class="muted">Logs</div>
+      <pre id="logBox"></pre>
+    </div>
+  </div>
+
+  <audio id="remoteAudio" autoplay playsinline></audio>
+
+  <script>
+    const logBox = document.getElementById("logBox");
+    const securePill = document.getElementById("securePill");
+    const sessionPill = document.getElementById("sessionPill");
+    const connPill = document.getElementById("connPill");
+    const pairCodeEl = document.getElementById("pairCode");
+    const txUrlEl = document.getElementById("txUrl");
+    const pttStateEl = document.getElementById("pttState");
+    const pttTsEl = document.getElementById("pttTs");
+    const armBtn = document.getElementById("armBtn");
+    const armState = document.getElementById("armState");
+    const remoteAudio = document.getElementById("remoteAudio");
+
+    const state = {
+      sessionId: null,
+      receiverToken: null,
+      pairCode: null,
+      pc: null,
+      armed: false,
+      closed: false,
+      pullBusy: false,
+      heartbeatTimer: null,
+      remoteStream: null,
+    };
+
+    function log(msg, data) {
+      const line = `[${new Date().toLocaleTimeString()}] ${msg}` + (data ? ` ${JSON.stringify(data)}` : "");
+      logBox.textContent = `${line}\n${logBox.textContent}`.slice(0, 12000);
+      console.log("[walkie-receiver]", msg, data || "");
+    }
+
+    function setPill(el, text, klass = "") {
+      el.textContent = text;
+      el.className = `pill ${klass}`.trim();
+    }
+
+    async function postJson(path, payload) {
+      const resp = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {}),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        throw new Error(data.error || `HTTP ${resp.status}`);
+      }
+      return data;
+    }
+
+    async function pushSignal(type, payload, to) {
+      if (!state.sessionId || !state.receiverToken) return;
+      await postJson("/walkie/api/signal/push", {
+        session_id: state.sessionId,
+        token: state.receiverToken,
+        to,
+        type,
+        payload: payload || {},
+      });
+    }
+
+    function waitIceGatheringComplete(pc, timeoutMs = 6000) {
+      if (pc.iceGatheringState === "complete") return Promise.resolve();
+      return new Promise((resolve) => {
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          pc.removeEventListener("icegatheringstatechange", onState);
+          resolve();
+        };
+        const onState = () => {
+          if (pc.iceGatheringState === "complete") finish();
+        };
+        pc.addEventListener("icegatheringstatechange", onState);
+        setTimeout(finish, timeoutMs);
+      });
+    }
+
+    function ensurePeerConnection() {
+      if (state.pc) return state.pc;
+      const pc = new RTCPeerConnection();
+      state.pc = pc;
+
+      pc.onconnectionstatechange = () => {
+        const cs = pc.connectionState || "unknown";
+        const klass = cs === "connected" ? "ok" : (cs === "failed" || cs === "disconnected" ? "warn" : "");
+        setPill(connPill, `webrtc: ${cs}`, klass);
+      };
+
+      pc.ontrack = (ev) => {
+        const stream = ev.streams && ev.streams[0] ? ev.streams[0] : null;
+        if (!stream) return;
+        state.remoteStream = stream;
+        remoteAudio.srcObject = stream;
+        log("remote audio track attached", { tracks: stream.getAudioTracks().length });
+        if (state.armed) {
+          remoteAudio.play().catch((err) => log("audio play blocked", { err: String(err) }));
+        }
+      };
+
+      return pc;
+    }
+
+    async function handleOffer(offerPayload) {
+      const pc = ensurePeerConnection();
+      await pc.setRemoteDescription(offerPayload);
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      await waitIceGatheringComplete(pc);
+      await pushSignal("answer", pc.localDescription, "transmitter");
+      log("answer sent");
+    }
+
+    async function handleSignal(msg) {
+      if (!msg || typeof msg !== "object") return;
+      const type = String(msg.type || "");
+      if (type === "offer") {
+        await handleOffer(msg.payload);
+        return;
+      }
+      if (type === "ptt_state") {
+        const pressed = Boolean(msg?.payload?.pressed);
+        pttStateEl.textContent = pressed ? "speaking" : "released";
+        pttTsEl.textContent = new Date().toLocaleTimeString();
+        return;
+      }
+    }
+
+    async function pullLoop() {
+      if (state.pullBusy || !state.sessionId || !state.receiverToken || state.closed) return;
+      state.pullBusy = true;
+      try {
+        const url = `/walkie/api/signal/pull?session_id=${encodeURIComponent(state.sessionId)}&token=${encodeURIComponent(state.receiverToken)}&timeout_ms=25000`;
+        const resp = await fetch(url);
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          throw new Error(data.error || `HTTP ${resp.status}`);
+        }
+        const msgs = Array.isArray(data.messages) ? data.messages : [];
+        for (const m of msgs) {
+          try {
+            await handleSignal(m);
+          } catch (err) {
+            log("signal handle failed", { err: String(err), type: m && m.type });
+          }
+        }
+      } catch (err) {
+        log("pull loop error", { err: String(err) });
+        await new Promise((r) => setTimeout(r, 800));
+      } finally {
+        state.pullBusy = false;
+        if (!state.closed) {
+          setTimeout(pullLoop, 30);
+        }
+      }
+    }
+
+    async function startSession() {
+      setPill(sessionPill, "session: creating");
+      const runId = new URLSearchParams(window.location.search).get("flow_run_id") || "log1";
+      const out = await postJson("/walkie/api/session/create", { flow_run_id: runId });
+      state.sessionId = out.session_id;
+      state.receiverToken = out.receiver_token;
+      state.pairCode = out.pair_code;
+      pairCodeEl.textContent = out.pair_code || "------";
+      txUrlEl.textContent = out.transmitter_url_with_code || out.transmitter_url || "(unknown)";
+      setPill(sessionPill, "session: ready", "ok");
+      log("session ready", { session_id: out.session_id, pair_code: out.pair_code });
+      pullLoop();
+
+      if (state.heartbeatTimer) clearInterval(state.heartbeatTimer);
+      state.heartbeatTimer = setInterval(() => {
+        pushSignal("heartbeat", { ts_ms: Date.now() }, "transmitter").catch(() => {});
+      }, 10000);
+    }
+
+    armBtn.addEventListener("click", async () => {
+      state.armed = true;
+      armState.textContent = "armed";
+      if (state.remoteStream) {
+        try {
+          remoteAudio.srcObject = state.remoteStream;
+          await remoteAudio.play();
+          log("audio output armed");
+        } catch (err) {
+          log("arm failed", { err: String(err) });
+        }
+      }
+    });
+
+    window.addEventListener("beforeunload", () => {
+      state.closed = true;
+      if (state.heartbeatTimer) clearInterval(state.heartbeatTimer);
+      if (state.sessionId && state.receiverToken) {
+        fetch("/walkie/api/session/close", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: state.sessionId, token: state.receiverToken }),
+          keepalive: true,
+        }).catch(() => {});
+      }
+      if (state.pc) {
+        try { state.pc.close(); } catch (_) {}
+      }
+    });
+
+    (async () => {
+      setPill(securePill, `secure-context: ${window.isSecureContext ? "yes" : "no"}`, window.isSecureContext ? "ok" : "warn");
+      try {
+        await startSession();
+      } catch (err) {
+        setPill(sessionPill, "session: failed", "warn");
+        log("session start failed", { err: String(err) });
+      }
+    })();
+  </script>
+</body>
+</html>
